@@ -2,11 +2,26 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>zone-of-avoidance</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <title>The Zone of Avoidance</title>
   </head>
   <body>
+    <canvas id="stage"></canvas>
+
+    <div id="chrome">
+      <h1 id="title">
+        <span class="title__name">The Zone of Avoidance</span>
+        <span class="title__hint">scroll, or hold space</span>
+      </h1>
+
+      <div id="captions" aria-live="polite"></div>
+
+      <div id="progress"><i id="progress-fill"></i></div>
+
+      <p id="status">reading the catalogue</p>
+    </div>
+
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>
-

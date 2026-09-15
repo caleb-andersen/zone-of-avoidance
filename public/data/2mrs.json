@@ -1,0 +1,36 @@
+{
+  "count": 43507,
+  "units": "Mpc",
+  "boundingRadius": 711.2113678080326,
+  "magnitudeRange": {
+    "min": 3.815,
+    "max": 11.754,
+    "band": "Ks",
+    "column": "Kcmag"
+  },
+  "format": {
+    "type": "float32",
+    "endianness": "little",
+    "components": [
+      "x",
+      "y",
+      "z",
+      "mag"
+    ],
+    "strideBytes": 16,
+    "headerBytes": 0
+  },
+  "coordinates": "observer-centered galactic; +x: l=0,b=0; +y: l=90,b=0; +z: galactic north",
+  "cosmology": {
+    "H0": 70,
+    "omegaM": 0.3,
+    "omegaLambda": 0.7,
+    "linearBelowCz": 10000
+  },
+  "source": "https://vizier.cfa.harvard.edu/viz-bin/asu-tsv?-source=J/ApJS/199/26/table3&-out=GLON,GLAT,cz,Kcmag&-out.max=unlimited",
+  "citation": "Huchra et al. 2012, ApJS 199, 26; VizieR J/ApJS/199/26/table3",
+  "dropped": {
+    "cz <= 0 (no positive redshift-derived distance)": 26,
+    "missing cz": 1066
+  }
+}
