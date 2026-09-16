@@ -23,7 +23,7 @@ export function captionsFor(galaxyCount) {
     {
       from: 0.335,
       to: 0.470,
-      text: 'We are inside the Milky Way, looking out through its own stars and dust. About nine per cent of the sky was never surveyed at all, and the counts stay thin well beyond that. This catalogue reads in the near infrared, which sees through dust far better than visible light does, so this is the best view we have rather than the worst.',
+      text: 'We are inside the Milky Way, looking out through its own stars and dust. Nine per cent of the sky was never surveyed at all, and the outline runs wider than that: it is drawn where the counts fall below half of what the open sky holds, measured off the catalogue itself. This catalogue reads in the near infrared, which sees through dust far better than visible light does, so this is the best view we have rather than the worst.',
     },
     {
       from: 0.470,

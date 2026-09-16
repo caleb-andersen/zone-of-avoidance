@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 import './style.css';
-import { GREAT_ATTRACTOR, R_END } from './constants.js';
+import { GREAT_ATTRACTOR, MASK_IN, R_END } from './constants.js';
 import { loadCatalogue, dirFromLB } from './data.js';
 import { synthesizeDeficit } from './synthesize.js';
 import { makeGalaxyCloud, makeEstimateCloud, makeAttractor } from './clouds.js';
 import { makeMilkyWay } from './milkyway.js';
+import { loadMask, makeMask } from './mask.js';
 import { createJourney } from './journey.js';
 import { captionsFor, mountCaptions } from './captions.js';
 import { makeRng } from './rng.js';
@@ -56,7 +57,7 @@ async function start() {
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(68, 1, 0.02, R_END * 4);
 
-  const cat = await loadCatalogue();
+  const [cat, maskContour] = await Promise.all([loadCatalogue(), loadMask()]);
   const rng = makeRng(0x9a11c3);
 
   const estimates = synthesizeDeficit(cat, rng);
@@ -68,8 +69,9 @@ async function start() {
   const attractor = makeAttractor(gaDir.map((v) => v * GREAT_ATTRACTOR.distance));
 
   const milkyWay = makeMilkyWay(foregroundCount(), rng);
+  const mask = makeMask(maskContour);
 
-  scene.add(galaxies, estimateCloud, attractor, milkyWay.group);
+  scene.add(galaxies, estimateCloud, attractor, mask.group, milkyWay.group);
 
   const journey = createJourney(canvas, camera);
   const updateCaptions = mountCaptions(captionsEl, captionsFor(cat.count));
@@ -119,6 +121,13 @@ async function start() {
     galaxies.material.uniforms.uOpacity.value = crowding;
     galaxies.material.uniforms.uSizeScale.value = 31 - 9 * zoom;
 
+    // The mask is named before it is filled: the outline arrives under the
+    // caption about the Zone of Avoidance, and eases back once the estimates
+    // are inside it and are the thing to be looking at.
+    mask.setOpacity(
+      smoothstep(MASK_IN[0], MASK_IN[1], t) * (1 - 0.22 * smoothstep(0.60, 0.74, t))
+    );
+
     estimateCloud.material.uniforms.uOpacity.value = smoothstep(0.615, 0.70, t);
     attractor.material.uniforms.uOpacity.value = smoothstep(0.835, 0.90, t);
 
@@ -154,6 +163,7 @@ async function start() {
     getT: () => journey.state.t,
     step(dt) { applyFrame(journey.step(dt)); },
     counts: { observed: cat.count, estimated: estimates.count },
+    mask: maskContour.measured,
   };
 
   statusEl.setAttribute('hidden', '');

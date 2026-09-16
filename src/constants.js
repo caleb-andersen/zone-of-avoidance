@@ -2,6 +2,9 @@
 
 export const DATA_URL = 'data/2mrs.bin';
 
+/** The measured survey mask: see scripts/build-zoa-mask.mjs. */
+export const MASK_URL = 'data/zoa-mask.json';
+
 /** Hard distance cut, megaparsecs. "Every galaxy within about 160 Mpc." */
 export const MAX_DISTANCE = 160;
 
@@ -25,6 +28,15 @@ export const LAT_SWEEP = 40; // degrees the opening circuit rides above/below b=
 // is what it actually is -- so the final orbit stays low.
 export const LAT_END = 14;
 
+/**
+ * The blocked volume is drawn out to the edge of the catalogue, because that
+ * is how far the claim goes: we cannot see through the band, and this map ends
+ * at 160 Mpc.
+ */
+export const MASK_RADIUS = MAX_DISTANCE;
+/** It fades in under the caption that names the Zone of Avoidance. */
+export const MASK_IN = [0.205, 0.315];
+
 /** Milky Way shell. Opacity is a function of camera radius, not of t. */
 export const MW_SHELL_RADIUS = 60;
 export const MW_FADE_END = 6.0; // Mpc: obstruction is gone once we are this far out
@@ -37,6 +49,8 @@ export const COLOR = {
   attractor: 0xe8573f, // the only saturated thing on screen
   mwCore: 0xc9a227, // ochre
   mwBand: 0xb4655a, // rose
+  mask: 0x5a4fc8, // indigo: the sky we could not see through
+  maskRim: 0xa79cf5, // its hairline
 };
 
 export const DEG = Math.PI / 180;
