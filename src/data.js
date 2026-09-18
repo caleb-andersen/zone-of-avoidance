@@ -4,7 +4,7 @@ import {
 import { makeRng } from './rng.js';
 
 /**
- * The binary is observer-centred galactic cartesian float32, +x towards l=0,
+ * The binary is observer-centred galactic cartesian float16, +x towards l=0,
  * +y towards l=90, +z galactic north. Which columns it holds, and in what
  * order, is whatever the manifest beside it says.
  *
@@ -70,9 +70,12 @@ export async function loadCatalogue() {
   const stride = components.length;
   const at = Object.fromEntries(components.map((c, i) => [c, i]));
 
-  const raw = new Float32Array(await res.arrayBuffer());
+  const bytes = await res.arrayBuffer();
+  const raw = new Uint16Array(bytes);
   if (raw.length % stride !== 0) throw new Error('catalogue does not match its manifest');
   const total = raw.length / stride;
+  const values = new DataView(bytes);
+  const valueAt = (index) => values.getFloat16(index * 2, true);
 
   // Local density is an optional channel: without it the map still draws,
   // it just has nothing to build clouds from.
@@ -86,7 +89,7 @@ export async function loadCatalogue() {
   let n = 0;
   for (let i = 0; i < total; i++) {
     const o = i * stride;
-    const r = Math.hypot(raw[o + at.x], raw[o + at.y], raw[o + at.z]);
+    const r = Math.hypot(valueAt(o + at.x), valueAt(o + at.y), valueAt(o + at.z));
     if (r > 0 && r <= MAX_DISTANCE) { keep[i] = 1; n++; }
   }
   if (n === 0) throw new Error('catalogue contained no galaxies inside the cut');
@@ -110,7 +113,7 @@ export async function loadCatalogue() {
   for (let i = 0; i < total; i++) {
     if (!keep[i]) continue;
     const o = i * stride;
-    const x = raw[o + at.x], y = raw[o + at.y], z = raw[o + at.z], m = raw[o + at.mag];
+    const x = valueAt(o + at.x), y = valueAt(o + at.y), z = valueAt(o + at.z), m = valueAt(o + at.mag);
     const r = Math.hypot(x, y, z);
     const [rx, ry, rz] = galacticToRender(x, y, z);
 
@@ -127,7 +130,7 @@ export async function loadCatalogue() {
     mags[j] = m;
 
     if (densityTable) {
-      const rho = raw[o + at.density];
+      const rho = valueAt(o + at.density);
       overdensity[j] = rho / meanDensityAt(densityTable, r);
       neighbourDist[j] = Math.cbrt((3 * k) / (4 * Math.PI * rho));
     }

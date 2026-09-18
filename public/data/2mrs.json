@@ -9,7 +9,7 @@
     "column": "Kcmag"
   },
   "format": {
-    "type": "float32",
+    "type": "float16",
     "endianness": "little",
     "components": [
       "x",
@@ -18,7 +18,7 @@
       "mag",
       "density"
     ],
-    "strideBytes": 20,
+    "strideBytes": 10,
     "headerBytes": 0
   },
   "coordinates": "observer-centered galactic; +x: l=0,b=0; +y: l=90,b=0; +z: galactic north",

@@ -360,18 +360,18 @@ export function makeAttractor(position) {
  * `radius` is the camera's distance from the origin; `sceneHeight` is the
  * height of the target the points are drawn into, in device pixels.
  */
-export function updateCloudOptics(clouds, { camera, radius, sceneHeight, cue, aperture, coreGain }) {
-  const near = Math.max(0, radius - MAX_DISTANCE);
-  const far = radius + MAX_DISTANCE;
+export function updateCloudOptics(clouds, { camera, radius, sceneHeight, cue, aperture, coreGain, range }) {
+  range.near = Math.max(0, radius - MAX_DISTANCE);
+  range.far = radius + MAX_DISTANCE;
   // Pixels per unit of tan(angle): the lens's focal length on this target.
   const focalPx = camera.projectionMatrix.elements[5] * sceneHeight * 0.5;
   for (const cloud of clouds) {
     const u = cloud.material.uniforms;
     u.uCue.value = cue;
-    u.uCueRange.value.set(near, far);
+    u.uCueRange.value.set(range.near, range.far);
     u.uAperture.value = aperture;
     u.uFocalPx.value = focalPx;
     u.uCoreGain.value = coreGain;
   }
-  return { near, far };
+  return range;
 }

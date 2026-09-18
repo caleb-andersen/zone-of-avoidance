@@ -15,11 +15,12 @@ const smoothstep = (a, b, x) => {
  * place, which is what frame-accurate capture depends on. Starting from rest
  * it eases in, and it always eases out: every stop is a deceleration.
  */
-function spring(x, v, target, omega, dt) {
+function spring(x, v, target, omega, dt, out) {
   const d = x - target;
   const k = v + omega * d;
   const e = Math.exp(-omega * dt);
-  return [target + (d + k * dt) * e, (v - omega * k * dt) * e];
+  out.x = target + (d + k * dt) * e;
+  out.v = (v - omega * k * dt) * e;
 }
 
 /**
@@ -89,6 +90,12 @@ export function createJourney(canvas, camera) {
 
   // Where the hand has put the view; the spring carries dragLon/Lat after it.
   const drag = { lon: 0, lat: 0, vLon: 0, vLat: 0 };
+  const tSpring = { x: 0, v: 0 };
+  const lonSpring = { x: 0, v: 0 };
+  const latSpring = { x: 0, v: 0 };
+  const baseHeading = { lon: 0, lat: 0 };
+  const driftState = { lon: 0, lat: 0, right: 0, up: 0, back: 0 };
+  const frame = { t: 0, radius: 0, mwOpacity: 1 };
 
   // ---- input ------------------------------------------------------------
 
@@ -173,7 +180,7 @@ export function createJourney(canvas, camera) {
   // ---- derivation -------------------------------------------------------
 
   /** Base heading in galactic degrees for a given t. */
-  function heading(t) {
+  function heading(t, out) {
     const u = clamp(t / T_PULLOUT, 0, 1);
     let lon = LON_START + 360 * u;
     let lat = LAT_SWEEP * Math.sin(2 * Math.PI * u);
@@ -182,7 +189,9 @@ export function createJourney(canvas, camera) {
       lon = LON_START + 360 + SWING * (1 - Math.exp(-v / DECAY)) + COAST * v;
       lat = LAT_END * (1 - Math.exp(-v / SETTLE));
     }
-    return { lon, lat };
+    out.lon = lon;
+    out.lat = lat;
+    return out;
   }
 
   /**
@@ -207,7 +216,7 @@ export function createJourney(canvas, camera) {
    * it is a fraction of a degree of sway instead. One hands over to the other
    * as the camera leaves.
    */
-  function drift(r) {
+  function drift(r, out) {
     const [p1, p2, p3] = CAMERA.periods;
     const c = state.clock;
     const a = Math.sin((2 * Math.PI * c) / p1 + 0.7);
@@ -215,12 +224,17 @@ export function createJourney(canvas, camera) {
     const e = Math.sin((2 * Math.PI * c) / p3 + 4.0);
     const sway = CAMERA.swayDeg * (1 - smoothstep(0, 6, r));
     const amp = CAMERA.drift * r;
-    return { lon: sway * a, lat: sway * 0.6 * b, right: amp * b, up: amp * 0.6 * a, back: amp * 0.5 * e };
+    out.lon = sway * a;
+    out.lat = sway * 0.6 * b;
+    out.right = amp * b;
+    out.up = amp * 0.6 * a;
+    out.back = amp * 0.5 * e;
+    return out;
   }
 
   function apply(dt) {
     const { t } = state;
-    const base = heading(t);
+    const base = heading(t, baseHeading);
 
     if (!state.reduced) state.idle += dt * IDLE_ORBIT * smoothstep(0.9, 1.0, t);
 
@@ -237,7 +251,7 @@ export function createJourney(canvas, camera) {
 
     const r = radius(t);
     const moving = state.eased && !state.reduced;
-    const d = moving ? drift(r) : null;
+    const d = moving ? drift(r, driftState) : null;
 
     const lon = (base.lon + state.dragLon + state.idle + (d ? d.lon : 0)) * DEG;
     const lat = clamp(base.lat + state.dragLat + (d ? d.lat : 0), -85, 85) * DEG;
@@ -270,12 +284,11 @@ export function createJourney(canvas, camera) {
       camera.updateProjectionMatrix();
     }
 
-    return {
-      t,
-      radius: r,
-      /** The obstruction is a property of standing inside the Milky Way. */
-      mwOpacity: 1 - smoothstep(0.2, MW_FADE_END, r),
-    };
+    frame.t = t;
+    frame.radius = r;
+    // The obstruction is a property of standing inside the Milky Way.
+    frame.mwOpacity = 1 - smoothstep(0.2, MW_FADE_END, r);
+    return frame;
   }
 
   return {
@@ -283,7 +296,9 @@ export function createJourney(canvas, camera) {
     step(dt) {
       readKeys(dt, shiftHeld);
       if (state.eased) {
-        [state.t, state.velocity] = spring(state.t, state.velocity, state.target, CAMERA.spring, dt);
+        spring(state.t, state.velocity, state.target, CAMERA.spring, dt, tSpring);
+        state.t = tSpring.x;
+        state.velocity = tSpring.v;
         if (state.t < 0 || state.t > 1) {
           state.t = clamp(state.t, 0, 1);
           state.velocity = 0;
@@ -292,8 +307,12 @@ export function createJourney(canvas, camera) {
           state.t = state.target;
           state.velocity = 0;
         }
-        [state.dragLon, drag.vLon] = spring(state.dragLon, drag.vLon, drag.lon, CAMERA.dragSpring, dt);
-        [state.dragLat, drag.vLat] = spring(state.dragLat, drag.vLat, drag.lat, CAMERA.dragSpring, dt);
+        spring(state.dragLon, drag.vLon, drag.lon, CAMERA.dragSpring, dt, lonSpring);
+        state.dragLon = lonSpring.x;
+        drag.vLon = lonSpring.v;
+        spring(state.dragLat, drag.vLat, drag.lat, CAMERA.dragSpring, dt, latSpring);
+        state.dragLat = latSpring.x;
+        drag.vLat = latSpring.v;
         if (!state.reduced) state.clock += dt;
       } else {
         // Ease towards the target so scroll, keys and touch all feel filmable.

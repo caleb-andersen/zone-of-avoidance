@@ -134,6 +134,7 @@ async function start() {
 
   let lastTitle = -1;
   let lastProgress = -1;
+  const cloudRange = { near: 0, far: 0 };
 
   function applyFrame(frame) {
     const { t, radius, mwOpacity } = frame;
@@ -177,6 +178,7 @@ async function start() {
       cue,
       aperture,
       coreGain: pipeline.hdr ? HDR.coreGain : 0,
+      range: cloudRange,
     });
     if (nebula) {
       const u = nebula.material.uniforms;

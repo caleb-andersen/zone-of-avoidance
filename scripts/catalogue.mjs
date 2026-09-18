@@ -18,25 +18,33 @@ export function readManifest() {
 }
 
 /**
- * The whole table as float32, plus a lookup from component name to its offset
- * within a row. Throws if the file and the manifest disagree about its size.
+ * The whole table expanded to float32, plus a lookup from component name to
+ * its offset within a row. The shipped catalogue may be float16 to reduce
+ * transfer size; offline analysis keeps its existing float32 interface.
  */
 export function readCatalogue() {
   const manifest = readManifest();
-  const { components, strideBytes } = manifest.format;
+  const { components, strideBytes, type } = manifest.format;
   const stride = components.length;
-  if (strideBytes !== stride * 4) {
-    throw new Error(`manifest stride ${strideBytes} does not match ${stride} float32 components`);
+  const componentBytes = type === 'float16' ? 2 : type === 'float32' ? 4 : 0;
+  if (!componentBytes || strideBytes !== stride * componentBytes) {
+    throw new Error(`unsupported catalogue format ${type} with stride ${strideBytes}`);
   }
   const buf = readFileSync(BIN_PATH);
   if (buf.byteLength % strideBytes !== 0) {
     throw new Error(`2mrs.bin is ${buf.byteLength} bytes, not a whole number of ${strideBytes}-byte rows`);
   }
-  const data = new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
-  const n = data.length / stride;
+  const n = buf.byteLength / strideBytes;
   if (manifest.count !== n) {
     throw new Error(`manifest says ${manifest.count} rows, file holds ${n}`);
   }
   const at = Object.fromEntries(components.map((c, i) => [c, i]));
+  if (type === 'float32') {
+    const data = new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
+    return { manifest, data, n, stride, at };
+  }
+  const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  const data = new Float32Array(n * stride);
+  for (let i = 0; i < data.length; i++) data[i] = view.getFloat16(i * 2, true);
   return { manifest, data, n, stride, at };
 }
