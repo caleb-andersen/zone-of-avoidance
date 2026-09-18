@@ -1,9 +1,12 @@
-import { DATA_URL, MAX_DISTANCE, MAG_BRIGHT, MAG_FAINT, DEG } from './constants.js';
+import {
+  DATA_URL, MANIFEST_URL, MAX_DISTANCE, MAG_BRIGHT, MAG_FAINT, DEG,
+} from './constants.js';
 import { makeRng } from './rng.js';
 
 /**
- * The binary is observer-centred galactic cartesian, float32 x/y/z/mag,
- * +x towards l=0, +y towards l=90, +z galactic north.
+ * The binary is observer-centred galactic cartesian float32, +x towards l=0,
+ * +y towards l=90, +z galactic north. Which columns it holds, and in what
+ * order, is whatever the manifest beside it says.
  *
  * Three.js wants +Y up, so the render frame is
  *   X = x (towards the galactic centre), Y = z (north), Z = -y.
@@ -39,12 +42,42 @@ function normaliseMag(mag) {
   return Math.min(1, Math.max(0, v));
 }
 
+/**
+ * The survey's own mean density at a distance, from the table the density
+ * script measured. It spans several decades, so it is interpolated in log.
+ */
+function meanDensityAt(table, r) {
+  const { r: rs, n: ns } = table;
+  if (r <= rs[0]) return ns[0];
+  if (r >= rs[rs.length - 1]) return ns[ns.length - 1];
+  const lo = Math.log(rs[0]);
+  const f = ((Math.log(r) - lo) / (Math.log(rs[rs.length - 1]) - lo)) * (rs.length - 1);
+  const i = Math.min(rs.length - 2, Math.floor(f));
+  const w = f - i;
+  return Math.exp(Math.log(ns[i]) * (1 - w) + Math.log(ns[i + 1]) * w);
+}
+
 export async function loadCatalogue() {
   const base = import.meta.env?.BASE_URL ?? '/';
-  const res = await fetch(base + DATA_URL);
+  const [res, manifestRes] = await Promise.all([
+    fetch(base + DATA_URL),
+    fetch(base + MANIFEST_URL),
+  ]);
   if (!res.ok) throw new Error(`catalogue request failed (${res.status})`);
+  if (!manifestRes.ok) throw new Error(`catalogue manifest request failed (${manifestRes.status})`);
+  const manifest = await manifestRes.json();
+  const components = manifest.format.components;
+  const stride = components.length;
+  const at = Object.fromEntries(components.map((c, i) => [c, i]));
+
   const raw = new Float32Array(await res.arrayBuffer());
-  const total = Math.floor(raw.length / 4);
+  if (raw.length % stride !== 0) throw new Error('catalogue does not match its manifest');
+  const total = raw.length / stride;
+
+  // Local density is an optional channel: without it the map still draws,
+  // it just has nothing to build clouds from.
+  const densityTable = 'density' in at ? manifest.density?.meanDensity : null;
+  const k = manifest.density?.k;
 
   const rng = makeRng(0x2a7b5);
 
@@ -52,8 +85,8 @@ export async function loadCatalogue() {
   const keep = new Uint8Array(total);
   let n = 0;
   for (let i = 0; i < total; i++) {
-    const x = raw[i * 4], y = raw[i * 4 + 1], z = raw[i * 4 + 2];
-    const r = Math.hypot(x, y, z);
+    const o = i * stride;
+    const r = Math.hypot(raw[o + at.x], raw[o + at.y], raw[o + at.z]);
     if (r > 0 && r <= MAX_DISTANCE) { keep[i] = 1; n++; }
   }
   if (n === 0) throw new Error('catalogue contained no galaxies inside the cut');
@@ -68,26 +101,41 @@ export async function loadCatalogue() {
   const lat = new Float32Array(n);
   const mags = new Float32Array(n);
 
-  let k = 0;
+  // Density over the survey's mean at that distance, and the neighbour
+  // distance it came from. Both measured offline; see build-density.mjs.
+  const overdensity = densityTable ? new Float32Array(n) : null;
+  const neighbourDist = densityTable ? new Float32Array(n) : null;
+
+  let j = 0;
   for (let i = 0; i < total; i++) {
     if (!keep[i]) continue;
-    const x = raw[i * 4], y = raw[i * 4 + 1], z = raw[i * 4 + 2], m = raw[i * 4 + 3];
+    const o = i * stride;
+    const x = raw[o + at.x], y = raw[o + at.y], z = raw[o + at.z], m = raw[o + at.mag];
     const r = Math.hypot(x, y, z);
     const [rx, ry, rz] = galacticToRender(x, y, z);
 
-    position[k * 3] = rx; position[k * 3 + 1] = ry; position[k * 3 + 2] = rz;
-    shape[k * 2] = rng() * Math.PI;
-    shape[k * 2 + 1] = sampleAxisRatio(rng);
-    bright[k] = normaliseMag(m);
-    dist[k] = r;
+    position[j * 3] = rx; position[j * 3 + 1] = ry; position[j * 3 + 2] = rz;
+    shape[j * 2] = rng() * Math.PI;
+    shape[j * 2 + 1] = sampleAxisRatio(rng);
+    bright[j] = normaliseMag(m);
+    dist[j] = r;
 
     let l = Math.atan2(y, x) / DEG;
     if (l < 0) l += 360;
-    lon[k] = l;
-    lat[k] = Math.asin(z / r) / DEG;
-    mags[k] = m;
-    k++;
+    lon[j] = l;
+    lat[j] = Math.asin(z / r) / DEG;
+    mags[j] = m;
+
+    if (densityTable) {
+      const rho = raw[o + at.density];
+      overdensity[j] = rho / meanDensityAt(densityTable, r);
+      neighbourDist[j] = Math.cbrt((3 * k) / (4 * Math.PI * rho));
+    }
+    j++;
   }
 
-  return { count: n, position, shape, bright, dist, lon, lat, mags, rng };
+  return {
+    count: n, position, shape, bright, dist, lon, lat, mags, rng,
+    overdensity, neighbourDist,
+  };
 }

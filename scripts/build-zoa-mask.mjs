@@ -29,13 +29,10 @@
  * Run: node scripts/build-zoa-mask.mjs [--report]
  */
 
-import { readFileSync, writeFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { ROOT, readCatalogue } from './catalogue.mjs';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const ROOT = join(HERE, '..');
-const IN_BIN = join(ROOT, 'public/data/2mrs.bin');
 const OUT_JSON = join(ROOT, 'public/data/zoa-mask.json');
 
 const DEG = Math.PI / 180;
@@ -93,13 +90,11 @@ const REF_SIGMA_SINB = 0.25;
 // ---------------------------------------------------------------------------
 
 function loadDirections() {
-  const buf = readFileSync(IN_BIN);
-  const f = new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
-  const n = Math.floor(f.length / 4);
+  const { data: f, n, stride, at } = readCatalogue();
   const lon = new Float64Array(n);
   const lat = new Float64Array(n);
   for (let i = 0; i < n; i++) {
-    const x = f[i * 4], y = f[i * 4 + 1], z = f[i * 4 + 2];
+    const x = f[i * stride + at.x], y = f[i * stride + at.y], z = f[i * stride + at.z];
     const r = Math.hypot(x, y, z);
     let l = Math.atan2(y, x) / DEG;
     if (l < 0) l += 360;

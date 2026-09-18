@@ -233,7 +233,10 @@ const SURFACE_FRAG = /* glsl */ `
   void main() {
     vec3 n = normalize(vNormal);
     vec3 v = normalize(vView);
-    float graze = pow(1.0 - abs(dot(n, v)), 1.8);
+    // Seen from the origin the cap is exactly face-on, and rounding can put
+    // |n.v| a hair over one; pow of a negative is NaN, which a float target
+    // keeps and a tonemapper turns black.
+    float graze = pow(max(1.0 - abs(dot(n, v)), 0.0), 1.8);
     float body = mix(0.30, 1.0, graze);
     // Thin towards the apex: the two sheets converge on the observer and would
     // otherwise pile a bright knot up at the origin, where there is nothing.
@@ -318,12 +321,23 @@ export function makeMask(mask) {
     rimLoop(lon, lower, rimMaterial)
   );
 
+  // A supersampled frame is resolved by averaging, which would thin a one-pixel
+  // line to a fraction of itself. Brightening it by the scale puts the same
+  // light back, spread over the pixel it now covers only part of.
+  let lineScale = 1;
+  let opacity = 0;
+
   return {
     group,
     setOpacity(v) {
+      opacity = v;
       group.visible = v > 0.002;
       material.uniforms.uOpacity.value = 0.072 * v;
-      rimMaterial.opacity = 0.55 * v;
+      rimMaterial.opacity = 0.55 * v * lineScale;
+    },
+    setLineScale(s) {
+      lineScale = Math.max(1, s);
+      rimMaterial.opacity = 0.55 * opacity * lineScale;
     },
   };
 }

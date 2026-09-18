@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "mask": "node scripts/build-zoa-mask.mjs"
+    "mask": "node scripts/build-zoa-mask.mjs",
+    "density": "node scripts/build-density.mjs"
   },
   "dependencies": {
     "three": "^0.179.1"

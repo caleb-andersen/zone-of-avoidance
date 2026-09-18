@@ -77,11 +77,55 @@ seen from 8 kpc out, with extinction integrated along each line of sight, which
 is what carves the dark lane. It is a shell parented to the camera's position,
 and its opacity is a function of camera radius rather than of `t` — being unable
 to see out is a property of standing inside the Milky Way, so leaving removes it.
+With `mwNoise` on, its clumps, filaments and dark lanes are fractal noise baked
+once into a map in `(l, b)`, modelled on the character of a dark-site
+photograph of the whole band (ESO's GigaGalaxy Zoom panorama). The large dark
+complexes — Ophiuchus, the Aquila and Cygnus rifts, the Coalsack, Cepheus,
+Taurus, Orion — sit where the real ones do; everything finer is invented.
+
+The soft clouds around dense groups are light nobody measured. What they are
+drawn from is measured: `scripts/build-density.mjs` gives every galaxy the
+distance to its twelfth-nearest neighbour, and divides the density that implies
+by the mean the survey reaches at that distance, because a flux-limited
+catalogue thins out with distance for no other reason. Clusters come out 35 to
+65 times the mean and the typical field galaxy about 3. Only observed galaxies
+more than 4.5 times the mean get a cloud, and no cloud is drawn inside the
+measured wedge. Run it with `npm run density`; it appends the density as a
+fifth float to each row of `2mrs.bin` and records the mean-density table in
+`2mrs.json`. Bloom is the same kind of thing: a property of lenses, not of the
+sky. With both switched off, the wedge reads as empty exactly as it did before
+either existed.
+
+## Rendering switches
+
+Each of these changes how the map looks and none changes what it says. All are
+on by default except supersampling.
+
+| switch     | what it does                                                        |
+| ---------- | ------------------------------------------------------------------- |
+| `hdr`      | float target, bloom on what is past white, ACES filmic tonemap       |
+| `nebula`   | soft clouds where measured galaxies are dense                        |
+| `scale`    | render at this multiple of the display resolution, then resolve (1)  |
+| `dof`      | shallow depth of field, focused on the galactic plane                |
+| `depthCue` | far galaxies desaturate and sink towards the background              |
+| `mwNoise`  | fractal Milky Way: star clouds, filaments, dark lanes                |
+| `camera`   | every stop eases out; a slow drift so no frame is static             |
+
+Set them in the query string — `?hdr=0`, `?scale=2`, or `?fx=none` to start
+from the look before any of them and add one back, `?fx=none&dof=1` — or live
+with `window.__zoa.fx({ nebula: false })`. The tuning numbers for each are in
+`src/constants.js`.
+
+The drift respects `prefers-reduced-motion`. The depth of field only comes in
+once the camera is out and above the plane: from the origin, the plane is seen
+edge-on and focuses nothing.
 
 ## Filming
 
 `window.__zoa.setT(t)` seeks; `window.__zoa.step(dt)` advances one exact
 timestep for frame-accurate capture; `#t=0.5` in the URL opens at a given point.
-None of it is wired to any interface.
+The camera's easing and drift are exact functions of those timesteps, and a
+seek resets the drift, so a retake is the same take. None of it is wired to any
+interface.
 
 Data: Huchra et al. 2012, ApJS 199, 26 (VizieR J/ApJS/199/26/table3).

@@ -1,6 +1,6 @@
 import {
   T_PULLOUT, R_END, FOV_NEAR, FOV_FAR,
-  LON_START, LAT_SWEEP, LAT_END, MW_FADE_END, DEG,
+  LON_START, LAT_SWEEP, LAT_END, MW_FADE_END, DEG, CAMERA,
 } from './constants.js';
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -8,6 +8,19 @@ const smoothstep = (a, b, x) => {
   const t = clamp((x - a) / (b - a || 1e-9), 0, 1);
   return t * t * (3 - 2 * t);
 };
+
+/**
+ * One exact step of a critically damped spring towards `target`. Exact rather
+ * than integrated, so the same sequence of timesteps always lands in the same
+ * place, which is what frame-accurate capture depends on. Starting from rest
+ * it eases in, and it always eases out: every stop is a deceleration.
+ */
+function spring(x, v, target, omega, dt) {
+  const d = x - target;
+  const k = v + omega * d;
+  const e = Math.exp(-omega * dt);
+  return [target + (d + k * dt) * e, (v - omega * k * dt) * e];
+}
 
 /**
  * Continuing the circuit's motion into the pull-out. Position and direction are
@@ -59,11 +72,23 @@ export function createJourney(canvas, camera) {
   const state = {
     t: 0,
     target: 0,
+    /** Rate of change of t, for the spring. */
+    velocity: 0,
     dragLon: 0,
     dragLat: 0,
     idle: 0,
     reduced,
+    /**
+     * With `eased` on, t and the drag both settle on springs, and the camera
+     * drifts on its own clock. Off, they behave as they always have.
+     */
+    eased: false,
+    /** Seconds of drift, advanced by step() and reset by setT(). */
+    clock: 0,
   };
+
+  // Where the hand has put the view; the spring carries dragLon/Lat after it.
+  const drag = { lon: 0, lat: 0, vLon: 0, vLat: 0 };
 
   // ---- input ------------------------------------------------------------
 
@@ -102,8 +127,8 @@ export function createJourney(canvas, camera) {
 
     if (pointers.size === 1) {
       // One finger, or the mouse: look around, or orbit once we are outside.
-      state.dragLon -= (e.clientX - prev.x) * DRAG_RATE;
-      state.dragLat += (e.clientY - prev.y) * DRAG_RATE;
+      drag.lon -= (e.clientX - prev.x) * DRAG_RATE;
+      drag.lat += (e.clientY - prev.y) * DRAG_RATE;
       return;
     }
 
@@ -173,6 +198,26 @@ export function createJourney(canvas, camera) {
     return R_END * ((1 - w) * Math.pow(v, 2.1) + w * v);
   }
 
+  /**
+   * The drift: three slow sines on periods that never line up. Out in the
+   * orbit it is a translation, a couple of megaparsecs at most, which is what
+   * makes near galaxies slide over far ones. At the origin a translation would
+   * move the viewer off the point the mask's sheets are built to be seen
+   * edge-on from, and there is nothing near enough to slide anyway, so there
+   * it is a fraction of a degree of sway instead. One hands over to the other
+   * as the camera leaves.
+   */
+  function drift(r) {
+    const [p1, p2, p3] = CAMERA.periods;
+    const c = state.clock;
+    const a = Math.sin((2 * Math.PI * c) / p1 + 0.7);
+    const b = Math.sin((2 * Math.PI * c) / p2 + 2.1);
+    const e = Math.sin((2 * Math.PI * c) / p3 + 4.0);
+    const sway = CAMERA.swayDeg * (1 - smoothstep(0, 6, r));
+    const amp = CAMERA.drift * r;
+    return { lon: sway * a, lat: sway * 0.6 * b, right: amp * b, up: amp * 0.6 * a, back: amp * 0.5 * e };
+  }
+
   function apply(dt) {
     const { t } = state;
     const base = heading(t);
@@ -182,12 +227,20 @@ export function createJourney(canvas, camera) {
     // Absorb any overshoot back into the drag offset instead of merely
     // clamping the result, so dragging past the pole and back does not leave a
     // dead zone where the view refuses to move.
-    const wanted = base.lat + state.dragLat;
+    const wanted = base.lat + drag.lat;
     const held = clamp(wanted, -85, 85);
-    state.dragLat -= wanted - held;
+    drag.lat -= wanted - held;
+    if (!state.eased) {
+      state.dragLon = drag.lon;
+      state.dragLat = drag.lat;
+    }
 
-    const lon = (base.lon + state.dragLon + state.idle) * DEG;
-    const lat = held * DEG;
+    const r = radius(t);
+    const moving = state.eased && !state.reduced;
+    const d = moving ? drift(r) : null;
+
+    const lon = (base.lon + state.dragLon + state.idle + (d ? d.lon : 0)) * DEG;
+    const lat = clamp(base.lat + state.dragLat + (d ? d.lat : 0), -85, 85) * DEG;
 
     const cb = Math.cos(lat);
     // Render frame: X towards l = 0, Y galactic north, Z = -y.
@@ -195,8 +248,16 @@ export function createJourney(canvas, camera) {
     const dy = Math.sin(lat);
     const dz = -cb * Math.sin(lon);
 
-    const r = radius(t);
     camera.position.set(-dx * r, -dy * r, -dz * r);
+    if (d && r > 0) {
+      // Right and up relative to the view, with galactic north as up.
+      const rl = Math.hypot(dz, dx) || 1;
+      const rx = -dz / rl, rz = dx / rl;
+      const ux = -dy * rz, uy = dx * rz - dz * rx, uz = dy * rx;
+      camera.position.x += rx * d.right + ux * d.up - dx * d.back;
+      camera.position.y += uy * d.up - dy * d.back;
+      camera.position.z += rz * d.right + uz * d.up - dz * d.back;
+    }
     camera.lookAt(
       camera.position.x + dx,
       camera.position.y + dy,
@@ -221,16 +282,41 @@ export function createJourney(canvas, camera) {
     state,
     step(dt) {
       readKeys(dt, shiftHeld);
-      // Ease towards the target so scroll, keys and touch all feel filmable.
-      state.t += (state.target - state.t) * (1 - Math.exp(-dt * 5));
-      if (Math.abs(state.target - state.t) < 1e-5) state.t = state.target;
+      if (state.eased) {
+        [state.t, state.velocity] = spring(state.t, state.velocity, state.target, CAMERA.spring, dt);
+        if (state.t < 0 || state.t > 1) {
+          state.t = clamp(state.t, 0, 1);
+          state.velocity = 0;
+        }
+        if (Math.abs(state.target - state.t) < 1e-5 && Math.abs(state.velocity) < 1e-4) {
+          state.t = state.target;
+          state.velocity = 0;
+        }
+        [state.dragLon, drag.vLon] = spring(state.dragLon, drag.vLon, drag.lon, CAMERA.dragSpring, dt);
+        [state.dragLat, drag.vLat] = spring(state.dragLat, drag.vLat, drag.lat, CAMERA.dragSpring, dt);
+        if (!state.reduced) state.clock += dt;
+      } else {
+        // Ease towards the target so scroll, keys and touch all feel filmable.
+        state.t += (state.target - state.t) * (1 - Math.exp(-dt * 5));
+        if (Math.abs(state.target - state.t) < 1e-5) state.t = state.target;
+        state.velocity = 0;
+      }
       return apply(dt);
     },
     setT(v) {
       state.target = clamp(v, 0, 1);
       state.t = state.target;
+      state.velocity = 0;
       state.idle = 0;
+      state.clock = 0;
+      state.dragLon = drag.lon;
+      state.dragLat = drag.lat;
+      drag.vLon = drag.vLat = 0;
       return apply(0);
+    },
+    setEased(on) {
+      state.eased = Boolean(on);
+      if (!state.eased) state.velocity = 0;
     },
   };
 }

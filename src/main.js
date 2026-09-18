@@ -1,14 +1,19 @@
 import * as THREE from 'three';
 import './style.css';
-import { GREAT_ATTRACTOR, MASK_IN, R_END } from './constants.js';
+import { GREAT_ATTRACTOR, MASK_IN, R_END, HDR, DOF } from './constants.js';
 import { loadCatalogue, dirFromLB } from './data.js';
 import { synthesizeDeficit } from './synthesize.js';
-import { makeGalaxyCloud, makeEstimateCloud, makeAttractor } from './clouds.js';
+import {
+  makeGalaxyCloud, makeEstimateCloud, makeAttractor, updateCloudOptics,
+} from './clouds.js';
 import { makeMilkyWay } from './milkyway.js';
+import { makeNebula } from './nebula.js';
 import { loadMask, makeMask } from './mask.js';
 import { createJourney } from './journey.js';
 import { captionsFor, mountCaptions } from './captions.js';
 import { makeRng } from './rng.js';
+import { readFx, sanitiseFx } from './fx.js';
+import { createPipeline } from './post.js';
 
 /**
  * Every material here writes gl_FragColor directly, so none of three's output
@@ -30,11 +35,18 @@ const smoothstep = (a, b, x) => {
   return t * t * (3 - 2 * t);
 };
 
-/** Phones get a smaller foreground field; it is the only thing that scales. */
-function foregroundCount() {
+function isSmallDevice() {
   const coarse = window.matchMedia('(pointer: coarse)').matches;
   const small = Math.min(window.innerWidth, window.innerHeight) < 620;
-  if (coarse || small) return 70000;
+  return coarse || small;
+}
+
+/**
+ * Phones get a smaller foreground field, and a coarser map of its structure;
+ * those are the only things that scale.
+ */
+function foregroundCount() {
+  if (isSmallDevice()) return 70000;
   return navigator.hardwareConcurrency >= 8 ? 210000 : 140000;
 }
 
@@ -45,6 +57,8 @@ function fail(message) {
 }
 
 async function start() {
+  const fx = readFx();
+
   const renderer = new THREE.WebGLRenderer({
     canvas,
     alpha: true,
@@ -64,34 +78,59 @@ async function start() {
 
   const galaxies = makeGalaxyCloud(cat);
   const estimateCloud = makeEstimateCloud(estimates);
+  const clouds = [galaxies, estimateCloud];
 
   const gaDir = dirFromLB(GREAT_ATTRACTOR.l, GREAT_ATTRACTOR.b);
   const attractor = makeAttractor(gaDir.map((v) => v * GREAT_ATTRACTOR.distance));
 
-  const milkyWay = makeMilkyWay(foregroundCount(), rng);
+  const milkyWay = makeMilkyWay(renderer, foregroundCount(), rng, {
+    detail: isSmallDevice() ? 0.5 : 1,
+  });
   const mask = makeMask(maskContour);
+  const nebula = makeNebula(cat, maskContour);
 
   scene.add(galaxies, estimateCloud, attractor, mask.group, milkyWay.group);
 
+  const pipeline = createPipeline(renderer);
   const journey = createJourney(canvas, camera);
   const updateCaptions = mountCaptions(captionsEl, captionsFor(cat.count));
 
-  let pixelRatio = 1;
+  const drawingSize = new THREE.Vector2();
   function resize() {
     const w = window.innerWidth;
     const h = window.innerHeight;
-    pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
     renderer.setPixelRatio(pixelRatio);
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
-    galaxies.material.uniforms.uPixelRatio.value = pixelRatio;
-    estimateCloud.material.uniforms.uPixelRatio.value = pixelRatio;
-    attractor.material.uniforms.uPixelRatio.value = pixelRatio;
-    milkyWay.setPixelRatio(pixelRatio);
+
+    renderer.getDrawingBufferSize(drawingSize);
+    pipeline.configure({
+      width: drawingSize.x,
+      height: drawingSize.y,
+      scale: fx.scale,
+      hdr: fx.hdr,
+      nebula: fx.nebula && nebula !== null,
+    });
+
+    // Everything sized in pixels is sized in the pixels it is drawn into, so
+    // a supersampled frame resolves to the same picture, only cleaner.
+    const pr = pixelRatio * pipeline.scale;
+    galaxies.material.uniforms.uPixelRatio.value = pr;
+    estimateCloud.material.uniforms.uPixelRatio.value = pr;
+    attractor.material.uniforms.uPixelRatio.value = pr;
+    milkyWay.setPixelRatio(pr);
+    mask.setLineScale(pipeline.scale);
+  }
+
+  function applyFx() {
+    journey.setEased(fx.camera);
+    resize();
+    milkyWay.setFx({ structured: fx.mwNoise, hdr: pipeline.hdr });
   }
   window.addEventListener('resize', resize);
-  resize();
+  applyFx();
 
   let lastTitle = -1;
   let lastProgress = -1;
@@ -121,6 +160,31 @@ async function start() {
     galaxies.material.uniforms.uOpacity.value = crowding;
     galaxies.material.uniforms.uSizeScale.value = 31 - 9 * zoom;
 
+    // Depth cue and lens. Both are measured from where the camera really is,
+    // drift included. The lens is focused on the galactic plane, which from
+    // the origin -- or from anywhere close to the plane -- is seen edge-on and
+    // focuses nothing, so it only comes in once the camera is out and above.
+    const camRadius = camera.position.length();
+    const elevation = Math.abs(camera.position.y) / Math.max(camRadius, 1e-6);
+    const aperture = fx.dof
+      ? DOF.aperture * smoothstep(DOF.ramp[0], DOF.ramp[1], camRadius) * smoothstep(0.03, 0.15, elevation)
+      : 0;
+    const cue = fx.depthCue ? 1 : 0;
+    const range = updateCloudOptics(clouds, {
+      camera,
+      radius: camRadius,
+      sceneHeight: pipeline.sceneHeight,
+      cue,
+      aperture,
+      coreGain: pipeline.hdr ? HDR.coreGain : 0,
+    });
+    if (nebula) {
+      const u = nebula.material.uniforms;
+      u.uCue.value = cue;
+      u.uCueRange.value.set(range.near, range.far);
+      u.uOpacity.value = crowding;
+    }
+
     // The mask is named before it is filled: the outline arrives under the
     // caption about the Zone of Avoidance, and eases back once the estimates
     // are inside it and are the thing to be looking at.
@@ -143,7 +207,7 @@ async function start() {
       lastProgress = t;
     }
 
-    renderer.render(scene, camera);
+    pipeline.render(scene, camera, pipeline.nebula ? nebula.scene : null);
   }
 
   // Deterministic seeking, for filming retakes and for capture. No UI.
@@ -162,9 +226,27 @@ async function start() {
     setT(v) { applyFrame(journey.setT(v)); return v; },
     getT: () => journey.state.t,
     step(dt) { applyFrame(journey.step(dt)); },
-    counts: { observed: cat.count, estimated: estimates.count },
+    /** Read or change the rendering switches (see src/fx.js), live. */
+    fx(patch) {
+      if (patch) {
+        Object.assign(fx, sanitiseFx({ ...fx, ...patch }));
+        applyFx();
+        applyFrame(journey.step(0));
+      }
+      return { ...fx, effectiveScale: pipeline.scale, hdrActive: pipeline.hdr };
+    },
+    counts: {
+      observed: cat.count,
+      estimated: estimates.count,
+      nebula: nebula ? nebula.count : 0,
+    },
     mask: maskContour.measured,
   };
+  if (import.meta.env.DEV) {
+    window.__zoa.internals = {
+      THREE, renderer, scene, camera, pipeline, mask, nebula, milkyWay, galaxies, estimateCloud,
+    };
+  }
 
   statusEl.setAttribute('hidden', '');
 
