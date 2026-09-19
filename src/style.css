@@ -2,7 +2,12 @@
   --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua",
     Georgia, "Times New Roman", serif;
   --warm: #f2e8d8;
-  --gutter: clamp(1.4rem, 4vw, 3.4rem);
+  --warm-rgb: 242, 232, 216;
+  --ink-rgb: 5, 6, 11;
+  --gutter: clamp(1.25rem, 4vw, 3.4rem);
+  /* The strip at the bottom that holds the scrubber and the chapter steps. */
+  --control: 44px;
+  --controls-bottom: calc(var(--gutter) * 0.5 + env(safe-area-inset-bottom, 0px));
 }
 
 * { box-sizing: border-box; }
@@ -20,8 +25,11 @@ body {
     fixed;
   color: var(--warm);
   font-family: var(--serif);
-  font-weight: 300;
+  font-weight: 400;
+  font-kerning: normal;
+  font-variant-ligatures: common-ligatures;
   -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
   text-rendering: optimizeLegibility;
 }
 
@@ -43,78 +51,233 @@ body {
   z-index: 2;
 }
 
+/*
+ * Not a panel: a long, soft fall of darkness under the lower third, so the
+ * captions and controls sit on something without a box being drawn round
+ * them. It never reaches the middle of the frame, where the band is.
+ */
+#chrome::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: min(46vh, 30rem);
+  background: linear-gradient(
+    to top,
+    rgba(var(--ink-rgb), 0.62) 0%,
+    rgba(var(--ink-rgb), 0.42) 28%,
+    rgba(var(--ink-rgb), 0.16) 62%,
+    rgba(var(--ink-rgb), 0) 100%
+  );
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* --- title ------------------------------------------------------------- */
 
 #title {
   position: absolute;
   top: calc(var(--gutter) + env(safe-area-inset-top, 0px));
-  left: var(--gutter);
+  left: calc(var(--gutter) + env(safe-area-inset-left, 0px));
   right: var(--gutter);
   margin: 0;
-  font-weight: 300;
+  font-weight: 400;
   will-change: opacity;
 }
 
 .title__name {
   display: block;
-  font-size: clamp(1.25rem, 2.4vw, 1.9rem);
-  letter-spacing: 0.035em;
-  opacity: 0.78;
+  font-size: clamp(1.3rem, 0.9rem + 1.4vw, 2rem);
+  line-height: 1.15;
+  letter-spacing: 0.02em;
+  opacity: 0.86;
+  text-shadow: 0 1px 18px rgba(var(--ink-rgb), 0.9);
 }
 
 .title__hint {
   display: block;
-  margin-top: 0.55em;
-  font-size: clamp(0.76rem, 1.05vw, 0.88rem);
-  letter-spacing: 0.16em;
-  text-transform: lowercase;
-  opacity: 0.3;
+  margin-top: 0.8em;
+  font-size: clamp(0.78rem, 0.72rem + 0.2vw, 0.88rem);
+  font-style: italic;
+  letter-spacing: 0.04em;
+  opacity: 0.56;
+  text-shadow: 0 1px 10px rgba(var(--ink-rgb), 0.9);
 }
 
 /* --- captions ---------------------------------------------------------- */
 
 #captions {
   position: absolute;
-  left: var(--gutter);
-  bottom: calc(var(--gutter) + 1.9rem + env(safe-area-inset-bottom, 0px));
-  width: min(38rem, calc(100% - var(--gutter) * 2));
-  height: 9.5em;
+  left: calc(var(--gutter) + env(safe-area-inset-left, 0px));
+  bottom: calc(var(--controls-bottom) + var(--control) + 0.9rem);
+  width: calc(100% - var(--gutter) * 2);
+  max-width: 35rem;
+  height: 0;
 }
 
+/*
+ * A reading measure of about sixty-five characters, a size that holds up on
+ * a television across a room and on a phone in the hand, and oldstyle
+ * figures so "160" and "31,697" sit in the line instead of standing above it.
+ */
 .caption {
   position: absolute;
   left: 0;
   bottom: 0;
   margin: 0;
   width: 100%;
-  font-size: clamp(0.98rem, 1.25vw, 1.16rem);
-  line-height: 1.62;
-  letter-spacing: 0.006em;
-  opacity: 0;
-  will-change: opacity;
+  font-size: clamp(1rem, 0.93rem + 0.3vw, 1.2rem);
+  line-height: 1.55;
+  letter-spacing: 0.005em;
+  font-variant-numeric: oldstyle-nums proportional-nums;
+  hanging-punctuation: first;
+  hyphens: manual;
   text-wrap: pretty;
-  /* Not a panel: just enough shadow to survive a bright patch of galaxies. */
-  text-shadow: 0 1px 14px rgba(4, 6, 11, 0.92), 0 0 3px rgba(4, 6, 11, 0.8);
+  opacity: 0;
+  visibility: hidden;
+  will-change: opacity, transform;
+  /* Enough shadow to survive a bright patch of galaxies. */
+  text-shadow: 0 1px 14px rgba(var(--ink-rgb), 0.95), 0 0 3px rgba(var(--ink-rgb), 0.85);
 }
 
-/* --- progress ---------------------------------------------------------- */
+/* --- controls ---------------------------------------------------------- */
 
-#progress {
+#controls {
   position: absolute;
-  left: var(--gutter);
-  right: var(--gutter);
-  bottom: calc(var(--gutter) * 0.62 + env(safe-area-inset-bottom, 0px));
+  left: calc(var(--gutter) + env(safe-area-inset-left, 0px) - 10px);
+  right: calc(var(--gutter) + env(safe-area-inset-right, 0px) - 10px);
+  bottom: var(--controls-bottom);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: var(--control);
+  pointer-events: auto;
+}
+
+/*
+ * The scrubber is the old hairline progress bar, grown a hit area. It is
+ * 44 pixels tall to the finger and one pixel tall to the eye.
+ */
+#progress {
+  position: relative;
+  flex: 1;
+  height: var(--control);
+  margin-right: 8px;
+  padding: 0 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  touch-action: none;
+  outline: none;
+}
+
+.progress__track {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  top: 50%;
   height: 1px;
-  background: rgba(242, 232, 216, 0.07);
+  background: rgba(var(--warm-rgb), 0.12);
+  transition: background-color 0.2s linear;
 }
 
 #progress-fill {
   display: block;
   height: 100%;
   width: 100%;
-  background: rgba(242, 232, 216, 0.34);
+  background: rgba(var(--warm-rgb), 0.5);
   transform-origin: left center;
+  transform: scaleX(0);
 }
+
+/* The thumb: only there when the scrubber is being reached for. */
+.progress__thumb {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 9px;
+  height: 9px;
+  margin: -4.5px 0 0 -4.5px;
+  border-radius: 50%;
+  background: var(--warm);
+  box-shadow: 0 0 0 3px rgba(var(--ink-rgb), 0.5);
+  opacity: 0;
+  transform: scale(0.6);
+  transition: opacity 0.15s linear, transform 0.15s ease-out;
+}
+#progress:hover .progress__thumb,
+#progress:focus-visible .progress__thumb,
+#progress.is-dragging .progress__thumb {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* Chapter marks: where the step buttons stop. */
+.progress__tick {
+  position: absolute;
+  top: -2px;
+  width: 1px;
+  height: 5px;
+  margin-left: -0.5px;
+  background: rgba(var(--warm-rgb), 0.3);
+}
+
+#progress:hover .progress__track { background: rgba(var(--warm-rgb), 0.2); }
+
+.step {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: var(--control);
+  height: var(--control);
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--warm);
+  opacity: 0.62;
+  cursor: pointer;
+  transition: opacity 0.2s linear, background-color 0.2s linear;
+}
+
+.step svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.step:hover { opacity: 1; background: rgba(var(--warm-rgb), 0.07); }
+.step:active { background: rgba(var(--warm-rgb), 0.12); }
+.step[aria-disabled="true"] { opacity: 0.2; cursor: default; background: transparent; }
+
+/*
+ * Focus is drawn for the keyboard only, in the warm off-white, with room to
+ * breathe: a ring that reads as part of the scene rather than as the
+ * browser's.
+ */
+#progress:focus-visible,
+.step:focus-visible {
+  outline: 1.5px solid rgba(var(--warm-rgb), 0.92);
+  outline-offset: 2px;
+  opacity: 1;
+}
+/* Drawn inside the scrubber's hit area, so it hugs the line rather than boxing the bar. */
+#progress:focus-visible { outline-offset: -8px; border-radius: 14px; }
+#progress:focus-visible .progress__track { background: rgba(var(--warm-rgb), 0.24); }
 
 /* --- status ------------------------------------------------------------ */
 
@@ -125,8 +288,9 @@ body {
   margin: 0;
   transform: translate(-50%, -50%);
   font-size: 0.86rem;
-  letter-spacing: 0.2em;
-  opacity: 0.4;
+  font-style: italic;
+  letter-spacing: 0.06em;
+  opacity: 0.5;
   transition: opacity 0.9s linear;
 }
 
@@ -134,14 +298,34 @@ body {
 
 #status.failed {
   color: #e8573f;
-  opacity: 0.85;
-  letter-spacing: 0.04em;
-  max-width: 24rem;
+  font-style: normal;
+  opacity: 0.9;
+  letter-spacing: 0.02em;
+  width: min(24rem, calc(100vw - var(--gutter) * 2));
   text-align: center;
   line-height: 1.6;
 }
 
+/* --- small screens ----------------------------------------------------- */
+
 @media (max-width: 640px) {
-  #captions { height: 12.5em; width: calc(100% - var(--gutter) * 2); }
-  .title__hint { letter-spacing: 0.12em; }
+  .caption {
+    font-size: 1rem;
+    line-height: 1.5;
+  }
+  #captions { bottom: calc(var(--controls-bottom) + var(--control) + 0.6rem); }
+}
+
+/* Phones on their side: the frame is short, so the text gets out of its way. */
+@media (max-height: 480px) and (orientation: landscape) {
+  #captions { max-width: min(30rem, 62vw); }
+  .caption { font-size: 0.94rem; line-height: 1.45; }
+  #chrome::before { height: 60vh; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #status,
+  .progress__track,
+  .progress__thumb,
+  .step { transition: none; }
 }

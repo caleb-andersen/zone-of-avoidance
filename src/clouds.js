@@ -55,6 +55,7 @@ const VERT = /* glsl */ `
   varying vec3 vColor;
   varying float vFocus;
   varying float vBright;
+  varying float vSize;
 
   void main() {
     vec4 world = modelMatrix * vec4(position, 1.0);
@@ -88,6 +89,7 @@ const VERT = /* glsl */ `
     }
 
     float focus = 1.0;
+    vSize = size;
     if (uAperture > 0.0) {
       // Where this point's own line of sight crosses the galactic plane is
       // where the lens is focused along it. View depth scales linearly along
@@ -139,13 +141,108 @@ const BOKEH = /* glsl */ `
 `;
 
 /**
- * A cored elliptical profile: a small bright nucleus falling into a much
- * broader halo. A single gaussian reads as dust on the lens; this reads as a
- * disc seen at an angle.
+ * A galaxy, as it would look in a small telescope image.
+ *
+ * A disc galaxy is two things with different shapes: a thin exponential disc,
+ * which foreshortens all the way to its thickness when seen edge-on, and a
+ * bulge, which is nearly as thick as it is wide and so stays round. Drawing
+ * both with one axis ratio -- as a single squashed profile -- turns every
+ * edge-on galaxy into a needle with no centre, which is the one thing a real
+ * one never looks like. So the nucleus here is flattened by the bulge's
+ * projected axis ratio and the disc by the disc's. Bigger, strongly inclined
+ * discs also show the dust lane along the near side of the major axis.
+ * Early types (their angle is tagged by +pi; see data.js) have no disc, only
+ * a smooth cored envelope.
+ *
+ * Every scale is widened in quadrature by a pixel's footprint, with the
+ * amplitude brought down to keep the light the same. A disc a fraction of a
+ * pixel thick is not drawable; point-sampled, it aliases into a one-pixel
+ * scratch. Prefiltered, it becomes a soft oval, and a sprite at the minimum
+ * size becomes a soft dot rather than a hard single pixel.
  *
  * With HDR on, the nucleus of a bright galaxy is allowed past white, so that
  * the bloom has something to find.
  */
+const GALAXY_PROFILE = /* glsl */ `
+  const float PI = 3.14159265;
+  /** Disc scale length, in sprite radii. */
+  const float H_DISC = 0.22;
+  /** Core radii of a bulge and of an elliptical, and the slopes of their wings. */
+  const float A_BULGE = 0.075;
+  const float A_ELLIPTICAL = 0.085;
+  const float G_BULGE = 1.7;
+  const float G_ELLIPTICAL = 1.35;
+  /** Intrinsic thickness of a bulge: how round it stays when seen edge-on. */
+  const float Q_BULGE = 0.62;
+  /**
+   * Peak brightness of each part. Balanced so that, averaged over the axis
+   * ratios the catalogue is drawn with, a sprite carries the same light as
+   * the single-profile sprite it replaced, and the scene's exposure holds.
+   */
+  const float DISC_PEAK = 1.5;
+  const float BULGE_PEAK = 1.3;
+  const float ELLIPTICAL_PEAK = 1.6;
+  /** The axis ratio at which an inclined disc is neither brightened nor dimmed. */
+  const float Q_REF = 0.62;
+
+  /** Surface brightness at sprite coordinate m (x along the major axis) and its total light. */
+  void galaxy(vec2 m, float q, float early, float px, float boost, float angle,
+              out float light, out float energy, out vec3 tint) {
+    // The disc is prefiltered by half a pixel; the core by nearly a whole
+    // one, which stands in for seeing -- a core narrower than that is a star.
+    // Both are capped so the smallest sprites still hold their own light.
+    float b = min(0.45 * px, 0.22);
+    float b2 = b * b;
+    float bc = min(0.9 * px, 0.30);
+    float bc2 = bc * bc;
+
+    // Core: bulge or elliptical, cored power law, prefiltered.
+    float a = mix(A_BULGE, A_ELLIPTICAL, early);
+    float qc = early > 0.5 ? q : sqrt(q * q * (1.0 - Q_BULGE * Q_BULGE) + Q_BULGE * Q_BULGE);
+    float g = mix(G_BULGE, G_ELLIPTICAL, early);
+    float ax = sqrt(a * a + bc2), ay = sqrt(a * a * qc * qc + bc2);
+    float cPeak = mix(BULGE_PEAK, ELLIPTICAL_PEAK, early) * boost * (a * a * qc) / (ax * ay);
+    float rc2 = (m.x * m.x) / (ax * ax) + (m.y * m.y) / (ay * ay);
+    float core = cPeak * pow(1.0 + rc2, -g);
+    float eCore = cPeak * PI * ax * ay / (g - 1.0);
+
+    // Disc: exponential, prefiltered. A disc seen at an angle keeps its light
+    // in a smaller area, so it brightens -- by less than the full 1/q, since
+    // edge-on the dust takes some of it back.
+    float disc = 0.0, eDisc = 0.0, lane = 0.0;
+    if (early < 0.5) {
+      float hx = sqrt(H_DISC * H_DISC + b2);
+      float hy = sqrt(H_DISC * H_DISC * q * q + b2);
+      float dPeak = DISC_PEAK * sqrt(Q_REF / q) * (H_DISC * H_DISC * q) / (hx * hy);
+      disc = dPeak * exp(-length(vec2(m.x / hx, m.y / hy)));
+      eDisc = dPeak * 2.0 * PI * hx * hy;
+
+      // The lane sits a little to the near side of the midplane, which is
+      // why only one side of a real edge-on disc looks cut. Only drawn where
+      // it spans enough pixels to be a lane rather than a darker line.
+      float hq = H_DISC * q;
+      float show = smoothstep(0.55, 0.28, q) * smoothstep(0.9, 2.2, hq / px);
+      if (show > 0.0) {
+        float side = fract(angle * 7.31) > 0.5 ? 1.0 : -1.0;
+        float w = 0.42 * hq + 0.5 * px;
+        float along = exp(-pow(m.x / (4.2 * H_DISC), 4.0));
+        lane = 0.62 * show * along * exp(-pow((m.y - side * 0.45 * hq) / w, 2.0));
+      }
+    }
+
+    // Round off where the sprite ends, well past where anything is visible.
+    float edge = 1.0 - smoothstep(0.72, 1.0, length(m));
+    float keep = 1.0 - lane;
+    light = (core + disc) * keep * edge;
+    energy = eCore + eDisc;
+
+    // Old stars in the middle, a slightly bluer disc: barely, so that the
+    // galaxies stay warm off-white as a population.
+    float fc = core / max(core + disc, 1e-6);
+    tint = mix(vec3(0.965, 0.99, 1.03), vec3(1.025, 0.99, 0.935), fc);
+  }
+`;
+
 const FRAG_GALAXY = /* glsl */ `
   uniform float uCoreGain;
   varying float vAngle;
@@ -154,35 +251,36 @@ const FRAG_GALAXY = /* glsl */ `
   varying vec3 vColor;
   varying float vFocus;
   varying float vBright;
-  ${ELLIPSE}
+  varying float vSize;
   ${BOKEH}
-
-  const float HALO_ENERGY = 0.24292;
-  const float NUCLEUS_ENERGY = 0.11479;
+  ${GALAXY_PROFILE}
 
   void main() {
     vec2 uv = gl_PointCoord * 2.0 - 1.0;
     float boost = 1.0 + uCoreGain * smoothstep(0.35, 0.95, vBright);
+    float early = step(PI, vAngle);
 
-    vec2 p = ellipseCoord(uv / vFocus, vAngle, vQ);
-    float r = length(p);
-    float sharp = 0.0;
-    if (r <= 1.0) {
-      float nucleus = exp(-r * r * 26.0);
-      float halo = exp(-pow(r + 0.02, 0.62) * 3.05);
-      float edge = 1.0 - smoothstep(0.70, 1.0, r);
-      sharp = (0.95 * nucleus * boost + 0.80 * halo) * edge;
-    }
+    // Into the galaxy's own frame: x along the major axis. The sharp profile
+    // occupies the middle vFocus of a sprite grown by its circle of confusion.
+    vec2 s = uv / vFocus;
+    float sn = sin(vAngle), cs = cos(vAngle);
+    vec2 m = vec2(cs * s.x - sn * s.y, sn * s.x + cs * s.y);
+    float px = 2.0 / max(vSize, 1.0);
+
+    float sharp, energy;
+    vec3 tint;
+    galaxy(m, max(vQ, 0.10), early, px, boost, vAngle, sharp, energy, tint);
+    if (length(s) > 1.0) sharp = 0.0;
 
     float i = sharp;
     float blur = 1.0 - vFocus * vFocus;
     if (blur > 0.001) {
-      float energy = (HALO_ENERGY + NUCLEUS_ENERGY * boost) * max(vQ, 0.10);
       float disc = bokeh(length(uv)) * energy / BOKEH_ENERGY;
       i = mix(sharp, disc * vFocus * vFocus, blur);
+      tint = mix(tint, vec3(1.0), blur);
     }
     if (i <= 0.0) discard;
-    gl_FragColor = vec4(vColor, i * vAlpha);
+    gl_FragColor = vec4(vColor * tint, i * vAlpha);
   }
 `;
 

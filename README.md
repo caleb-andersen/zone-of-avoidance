@@ -14,8 +14,19 @@ npm run dev
 ## The journey
 
 Everything is derived from a single scalar `t` in `[0, 1]`. Scroll, hold space,
-press the arrow keys, or drag two fingers. There are no steps and nothing to
-click.
+press the arrow keys, or drag two fingers. Along the bottom, the progress line
+is also a scrubber, and `‹ ›` step between chapters — the middle of each
+caption's range — for a phone held in one hand and for the keyboard:
+
+| key              | does                                   |
+| ---------------- | -------------------------------------- |
+| Space, arrows    | travel while held (Shift+Space: back)  |
+| PageDown, N      | next chapter                           |
+| PageUp, P        | previous chapter                       |
+| Home, End        | the start, the end                     |
+| Tab              | the scrubber, then `‹` and `›`         |
+
+With the scrubber focused, the arrows step it instead.
 
 | `t`    | what happens                                                         |
 | ------ | -------------------------------------------------------------------- |
@@ -116,7 +127,10 @@ from the look before any of them and add one back, `?fx=none&dof=1` — or live
 with `window.__zoa.fx({ nebula: false })`. The tuning numbers for each are in
 `src/constants.js`.
 
-The drift respects `prefers-reduced-motion`. The depth of field only comes in
+`prefers-reduced-motion` is read live (`src/motion.js`) and answered the same
+way everywhere: nothing moves that the viewer did not move. The drift's clock
+and the idle orbit stop, chapter steps cut instead of flying, and captions fade
+without rising. Scrolling, dragging and held keys still move the camera. The depth of field only comes in
 once the camera is out and above the plane: from the origin, the plane is seen
 edge-on and focuses nothing.
 

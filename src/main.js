@@ -10,7 +10,8 @@ import { makeMilkyWay } from './milkyway.js';
 import { makeNebula } from './nebula.js';
 import { loadMask, makeMask } from './mask.js';
 import { createJourney } from './journey.js';
-import { captionsFor, mountCaptions } from './captions.js';
+import { captionsFor, chapterStops, mountCaptions } from './captions.js';
+import { mountControls } from './controls.js';
 import { makeRng } from './rng.js';
 import { readFx, sanitiseFx } from './fx.js';
 import { createPipeline } from './post.js';
@@ -28,7 +29,7 @@ const canvas = document.getElementById('stage');
 const statusEl = document.getElementById('status');
 const titleEl = document.getElementById('title');
 const captionsEl = document.getElementById('captions');
-const progressEl = document.getElementById('progress-fill');
+const captionLiveEl = document.getElementById('caption-live');
 
 const smoothstep = (a, b, x) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a || 1e-9)));
@@ -51,6 +52,8 @@ function foregroundCount() {
 }
 
 function fail(message) {
+  statusEl.removeAttribute('aria-hidden');
+  statusEl.setAttribute('role', 'alert');
   statusEl.className = 'failed';
   statusEl.textContent = message;
   statusEl.removeAttribute('hidden');
@@ -93,7 +96,13 @@ async function start() {
 
   const pipeline = createPipeline(renderer);
   const journey = createJourney(canvas, camera);
-  const updateCaptions = mountCaptions(captionsEl, captionsFor(cat.count));
+  const captions = captionsFor(cat.count);
+  const updateCaptions = mountCaptions(captionsEl, captionLiveEl, captions);
+  const controls = mountControls({
+    journey,
+    stops: chapterStops(captions),
+    captions,
+  });
 
   const drawingSize = new THREE.Vector2();
   function resize() {
@@ -133,10 +142,13 @@ async function start() {
   applyFx();
 
   let lastTitle = -1;
-  let lastProgress = -1;
   const cloudRange = { near: 0, far: 0 };
 
-  function applyFrame(frame) {
+  /**
+   * Draw one frame. `dt` is the real time it covers, which only the captions'
+   * fades care about; `seek` means the frame was jumped to, not arrived at.
+   */
+  function applyFrame(frame, dt = 0, seek = false) {
     const { t, radius, mwOpacity } = frame;
 
     // The shell follows the camera's position but never its rotation, so the
@@ -197,17 +209,14 @@ async function start() {
     estimateCloud.material.uniforms.uOpacity.value = smoothstep(0.615, 0.70, t);
     attractor.material.uniforms.uOpacity.value = smoothstep(0.835, 0.90, t);
 
-    updateCaptions(t);
+    const chapter = updateCaptions(t, dt, seek);
 
     const titleAlpha = 1 - smoothstep(0.004, 0.035, t);
     if (Math.abs(titleAlpha - lastTitle) > 0.002) {
       titleEl.style.opacity = titleAlpha.toFixed(3);
       lastTitle = titleAlpha;
     }
-    if (Math.abs(t - lastProgress) > 0.0008) {
-      progressEl.style.transform = `scaleX(${t.toFixed(4)})`;
-      lastProgress = t;
-    }
+    controls.update(t, chapter);
 
     pipeline.render(scene, camera, pipeline.nebula ? nebula.scene : null);
   }
@@ -217,7 +226,7 @@ async function start() {
   // as well as read at load, or a retake silently keeps the previous frame.
   function seekFromHash() {
     const hash = /t=([0-9]*\.?[0-9]+)/.exec(window.location.hash);
-    if (hash) applyFrame(journey.setT(parseFloat(hash[1])));
+    if (hash) applyFrame(journey.setT(parseFloat(hash[1])), 0, true);
   }
   window.addEventListener('hashchange', seekFromHash);
   seekFromHash();
@@ -225,9 +234,9 @@ async function start() {
   // Capture hook for filming: seek to an exact t, or advance by an exact
   // timestep for frame-accurate recording. Deliberately not wired to any UI.
   window.__zoa = {
-    setT(v) { applyFrame(journey.setT(v)); return v; },
+    setT(v) { applyFrame(journey.setT(v), 0, true); return v; },
     getT: () => journey.state.t,
-    step(dt) { applyFrame(journey.step(dt)); },
+    step(dt) { applyFrame(journey.step(dt), dt); },
     /** Read or change the rendering switches (see src/fx.js), live. */
     fx(patch) {
       if (patch) {
@@ -251,12 +260,13 @@ async function start() {
   }
 
   statusEl.setAttribute('hidden', '');
+  statusEl.setAttribute('aria-hidden', 'true');
 
   let last = performance.now();
   function loop(now) {
     const dt = Math.min((now - last) / 1000, 0.1);
     last = now;
-    applyFrame(journey.step(dt));
+    applyFrame(journey.step(dt), dt);
     requestAnimationFrame(loop);
   }
   requestAnimationFrame(loop);

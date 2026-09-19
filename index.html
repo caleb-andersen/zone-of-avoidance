@@ -4,23 +4,44 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#06070c" />
     <link rel="preload" href="/zone-of-avoidance/data/2mrs.bin" as="fetch" type="application/octet-stream" crossorigin />
     <title>The Zone of Avoidance</title>
   </head>
   <body>
-    <canvas id="stage"></canvas>
+    <canvas id="stage" aria-label="A map of every galaxy within 160 megaparsecs, seen from inside the Milky Way" role="img"></canvas>
 
     <div id="chrome">
       <h1 id="title">
         <span class="title__name">The Zone of Avoidance</span>
-        <span class="title__hint">scroll, or hold space</span>
+        <span class="title__hint" id="hint">scroll, or hold space</span>
       </h1>
 
-      <div id="captions" aria-live="polite"></div>
+      <div id="captions" aria-hidden="true"></div>
+      <p id="caption-live" class="visually-hidden" aria-live="polite"></p>
 
-      <div id="progress"><i id="progress-fill"></i></div>
+      <nav id="controls" aria-label="Journey">
+        <div
+          id="progress"
+          role="slider"
+          tabindex="0"
+          aria-label="Position in the journey"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-valuenow="0"
+          aria-valuetext="The start"
+        >
+          <span class="progress__track"><i id="progress-fill"></i><b class="progress__thumb"></b></span>
+        </div>
+        <button id="prev" class="step" type="button" aria-label="Previous part" aria-keyshortcuts="PageUp">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6.5 9 12l5.5 5.5" /></svg>
+        </button>
+        <button id="next" class="step" type="button" aria-label="Next part" aria-keyshortcuts="PageDown">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 6.5 15 12l-5.5 5.5" /></svg>
+        </button>
+      </nav>
 
-      <p id="status">reading the catalogue</p>
+      <p id="status" role="status">reading the catalogue</p>
     </div>
 
     <script type="module" src="/src/main.js"></script>

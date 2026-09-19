@@ -2,6 +2,7 @@ import {
   T_PULLOUT, R_END, FOV_NEAR, FOV_FAR,
   LON_START, LAT_SWEEP, LAT_END, MW_FADE_END, DEG, CAMERA,
 } from './constants.js';
+import { prefersReducedMotion } from './motion.js';
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const smoothstep = (a, b, x) => {
@@ -42,6 +43,26 @@ const SETTLE = 0.030; // latitude decay constant, in v
 const IDLE_ORBIT = 0.9;
 
 const KEY_RATE = 0.08; // t per second while a key is held
+
+/**
+ * The field of view is vertical, which on a phone held upright leaves a slot
+ * a couple of dozen degrees across: at the end of the journey the Great
+ * Attractor, which the last caption points at, would be out of shot. Narrow
+ * frames are widened until they are as wide as a MIN_ASPECT frame would be,
+ * up to a cap past which the perspective starts to pull.
+ */
+const MIN_ASPECT = 0.75;
+const FOV_CAP = 84;
+function fitFov(v, aspect) {
+  if (!(aspect < MIN_ASPECT)) return v;
+  const half = Math.atan((Math.tan((v * DEG) / 2) * MIN_ASPECT) / aspect);
+  return Math.min(FOV_CAP, Math.max(v, (2 * half) / DEG));
+}
+
+/** Elements that handle the keyboard themselves while they have focus. */
+function ownsKeys(el) {
+  return el instanceof Element && el.closest('button, input, select, textarea, [role="slider"]') !== null;
+}
 const WHEEL_RATE = 1 / 2600; // t per pixel of wheel travel
 const DRAG_RATE = 0.14; // degrees per pixel
 const TOUCH_T_RATE = 1 / 620; // t per pixel of two-finger travel
@@ -68,7 +89,7 @@ const PINCH_RATE = 1 / 900;
  * still works and t still means how far through the journey you are.
  */
 export function createJourney(canvas, camera) {
-  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const reduced = prefersReducedMotion();
 
   const state = {
     t: 0,
@@ -154,6 +175,9 @@ export function createJourney(canvas, camera) {
   });
 
   window.addEventListener('keydown', (e) => {
+    // A focused control answers its own keys: Space presses a button, and the
+    // scrubber takes the arrows as steps. And a chord is someone else's.
+    if (ownsKeys(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
     const k = e.key;
     if (k === ' ' || k === 'Spacebar' || k.startsWith('Arrow')) {
       e.preventDefault();
@@ -176,6 +200,9 @@ export function createJourney(canvas, camera) {
   let shiftHeld = false;
   window.addEventListener('keydown', (e) => { shiftHeld = e.shiftKey; });
   window.addEventListener('keyup', (e) => { shiftHeld = e.shiftKey; });
+
+  // Losing focus to a control mid-hold must not leave a key held down.
+  window.addEventListener('focusin', (e) => { if (ownsKeys(e.target)) keys.clear(); });
 
   // ---- derivation -------------------------------------------------------
 
@@ -233,6 +260,7 @@ export function createJourney(canvas, camera) {
   }
 
   function apply(dt) {
+    state.reduced = prefersReducedMotion();
     const { t } = state;
     const base = heading(t, baseHeading);
 
@@ -250,8 +278,10 @@ export function createJourney(canvas, camera) {
     }
 
     const r = radius(t);
-    const moving = state.eased && !state.reduced;
-    const d = moving ? drift(r, driftState) : null;
+    // With motion reduced the drift's clock stops rather than the drift being
+    // taken away, so switching the preference with the page open freezes the
+    // camera where it is instead of jumping it.
+    const d = state.eased ? drift(r, driftState) : null;
 
     const lon = (base.lon + state.dragLon + state.idle + (d ? d.lon : 0)) * DEG;
     const lat = clamp(base.lat + state.dragLat + (d ? d.lat : 0), -85, 85) * DEG;
@@ -278,7 +308,7 @@ export function createJourney(canvas, camera) {
       camera.position.z + dz
     );
 
-    const fov = FOV_NEAR + (FOV_FAR - FOV_NEAR) * smoothstep(0.30, 0.95, t);
+    const fov = fitFov(FOV_NEAR + (FOV_FAR - FOV_NEAR) * smoothstep(0.30, 0.95, t), camera.aspect);
     if (Math.abs(camera.fov - fov) > 1e-4) {
       camera.fov = fov;
       camera.updateProjectionMatrix();
@@ -313,7 +343,7 @@ export function createJourney(canvas, camera) {
         spring(state.dragLat, drag.vLat, drag.lat, CAMERA.dragSpring, dt, latSpring);
         state.dragLat = latSpring.x;
         drag.vLat = latSpring.v;
-        if (!state.reduced) state.clock += dt;
+        if (!prefersReducedMotion()) state.clock += dt;
       } else {
         // Ease towards the target so scroll, keys and touch all feel filmable.
         state.t += (state.target - state.t) * (1 - Math.exp(-dt * 5));
@@ -332,6 +362,23 @@ export function createJourney(canvas, camera) {
       state.dragLat = drag.lat;
       drag.vLon = drag.vLat = 0;
       return apply(0);
+    },
+    /** Head for `v`; the camera eases there the way it does for scrolling. */
+    setTarget(v) {
+      state.target = clamp(v, 0, 1);
+    },
+    /**
+     * Go to `v` as a jump between chapters. It flies, unless motion is
+     * reduced, in which case it cuts: a flight between chapters is exactly
+     * the kind of large movement the viewer did not make themselves. A cut
+     * keeps the viewer's own drag, unlike a seek.
+     */
+    jump(v) {
+      state.target = clamp(v, 0, 1);
+      if (prefersReducedMotion()) {
+        state.t = state.target;
+        state.velocity = 0;
+      }
     },
     setEased(on) {
       state.eased = Boolean(on);

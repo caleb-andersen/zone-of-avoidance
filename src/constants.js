@@ -51,6 +51,7 @@ export const COLOR = {
   attractor: 0xe8573f, // the only saturated thing on screen
   mwCore: 0xc9a227, // ochre
   mwBand: 0xb4655a, // rose
+  mwDust: 0xb07a52, // starlight reddened by dust: brown, never pink
   mask: 0x5a4fc8, // indigo: the sky we could not see through
   maskRim: 0xa79cf5, // its hairline
 };

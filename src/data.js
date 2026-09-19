@@ -28,10 +28,11 @@ export function dirFromLB(lDeg, bDeg) {
  * A galaxy is a disc or a spheroid seen at a random angle. For randomly
  * oriented thin discs cos(i) is uniform, and the apparent axis ratio of a
  * disc with intrinsic thickness q0 is sqrt(cos^2 i (1 - q0^2) + q0^2).
- * Ellipticals are rounder, so they get their own milder draw.
+ * Ellipticals are rounder, so they get their own milder draw, and are
+ * returned negative so the caller can tag them: they are drawn without a disc.
  */
 function sampleAxisRatio(rng) {
-  if (rng() < 0.28) return 0.62 + 0.38 * rng(); // early type
+  if (rng() < 0.28) return -(0.62 + 0.38 * rng()); // early type
   const q0 = 0.19;
   const cosi = rng();
   return Math.sqrt(cosi * cosi * (1 - q0 * q0) + q0 * q0);
@@ -118,8 +119,12 @@ export async function loadCatalogue() {
     const [rx, ry, rz] = galacticToRender(x, y, z);
 
     position[j * 3] = rx; position[j * 3 + 1] = ry; position[j * 3 + 2] = rz;
-    shape[j * 2] = rng() * Math.PI;
-    shape[j * 2 + 1] = sampleAxisRatio(rng);
+    // An ellipse is the same shape turned by pi, so an early type's angle is
+    // moved into [pi, 2 pi) to tag it for the shader at no cost.
+    const angle = rng() * Math.PI;
+    const q = sampleAxisRatio(rng);
+    shape[j * 2] = q < 0 ? angle + Math.PI : angle;
+    shape[j * 2 + 1] = Math.abs(q);
     bright[j] = normaliseMag(m);
     dist[j] = r;
 

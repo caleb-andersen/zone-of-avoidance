@@ -52,7 +52,7 @@ function opticalDepth(d, sinB, kappa) {
  * out in the vertex shader from each star's normalised flux and optical depth,
  * so that the structured dust can dim and redden the stars behind it without
  * the field having to be generated twice. With the structure off the shader
- * reproduces the old formulas exactly.
+ * uses the same brightness curve and reddening, without the map's dust.
  */
 export function generateStars(count, rng) {
   const dir = new Float32Array(count * 3);
@@ -110,8 +110,12 @@ export function generateStars(count, rng) {
   const level = new Float32Array(count);
   const color = new Float32Array(count * 3);
 
-  const warm = new THREE.Color(0xffe9cc);
-  const amber = new THREE.Color(0xffc69c);
+  // Star colours as a camera sees them from a dark site: nearly white, a
+  // spread towards pale amber, and a few hot blue-white ones. The reddening
+  // of the ones behind dust is applied in the shader.
+  const warm = new THREE.Color(0xfff4e8);
+  const amber = new THREE.Color(0xffdcb8);
+  const hot = new THREE.Color(0xe6ecff);
   const tmp = new THREE.Color();
 
   for (let i = 0; i < count; i++) {
@@ -121,7 +125,11 @@ export function generateStars(count, rng) {
     // Unclamped: extinction in the shader may push it below zero.
     level[i] = (logFlux[i] - lo) / span;
 
-    tmp.copy(warm).lerp(amber, rng());
+    // One draw decides both, so the sequence -- and so everything else this
+    // generator produces -- is unchanged.
+    const u = rng();
+    if (u < 0.14) tmp.copy(warm).lerp(hot, 1 - u / 0.14);
+    else tmp.copy(warm).lerp(amber, (u - 0.14) / 0.86);
     color[i * 3] = tmp.r;
     color[i * 3 + 1] = tmp.g;
     color[i * 3 + 2] = tmp.b;
@@ -269,14 +277,30 @@ const BAKE_FRAG = /* glsl */ `
     float warp = 0.9 * sin(lr + 0.5) + 0.4 * sin(2.2 * lr + 2.0);
     float edgeWobble = 2.4 * fbm(wa * 3.0 + 40.0, 4);
     float bb = b - warp - edgeWobble * (0.4 + 0.6 * smoothstep(2.0, 9.0, abs(b)));
-    float h = mix(2.6, 4.6, toCentre) * (0.85 + 0.35 * fbm(w * 1.6 + 70.0, 3));
-    float disc = exp(-abs(bb) / h) + 0.30 * exp(-abs(bb) / (h * 2.8));
-    disc *= 0.42 + 0.58 * inner;
+    float h = mix(3.0, 4.6, toCentre) * (0.85 + 0.35 * fbm(w * 1.6 + 70.0, 3));
+    float disc = exp(-abs(bb) / h) + 0.42 * exp(-abs(bb) / (h * 2.8));
+
+    // Brightness along the band is not a smooth fall from centre to
+    // anticentre. In the photograph it is carried by a handful of great star
+    // clouds with fainter stretches between them, and those are placed here
+    // where they are, so the band has somewhere to be bright away from the
+    // bulge -- and the dust something to be seen against.
+    float starClouds =
+        0.62 * blob(l, bb,  27.0, -2.0,  4.5, 3.0)    // Scutum
+      + 0.55 * blob(l, bb,   4.0, -4.5,  6.0, 4.0)    // Sagittarius
+      + 0.30 * blob(l, bb,  45.0, -1.5,  9.0, 3.5)    // Aquila
+      + 0.60 * blob(l, bb,  76.0,  1.5, 13.0, 5.0)    // Cygnus
+      + 0.22 * blob(l, bb, 122.0,  0.0, 22.0, 4.5)    // Cassiopeia, Perseus
+      + 0.18 * blob(l, bb, 250.0, -1.5, 16.0, 4.5)    // Puppis, Vela
+      + 0.60 * blob(l, bb, 287.0, -1.0,  7.0, 4.0)    // Carina
+      + 0.45 * blob(l, bb, 310.0, -0.5,  8.0, 3.5)    // Centaurus, Crux
+      + 0.40 * blob(l, bb, 332.0, -1.0,  9.0, 3.5);   // Norma
+    disc *= 0.40 + 0.46 * inner + starClouds;
 
     // A bulge that is broad, soft, a little boxy, and sits just south of the
     // plane, where the dust lets more of it through.
     float dl0 = abs(mod(l + 180.0, 360.0) - 180.0);
-    float bulge = exp(-pow(abs(b + 1.8) / 7.0, 1.5)) * exp(-pow(dl0 / 13.0, 1.7));
+    float bulge = exp(-pow(abs(b + 1.8) / 8.5, 1.5)) * exp(-pow(dl0 / 15.0, 1.7));
 
     // Star clouds: mottling a few degrees across, higher contrast towards the
     // inner Galaxy, where the real ones (Scutum, Sagittarius) are brightest.
@@ -324,7 +348,13 @@ const BAKE_FRAG = /* glsl */ `
       + 0.35 * blob(l, b, 300.0, -16.0, 3.0, 2.0)     // Chamaeleon
       + 0.35 * blob(l, b,   0.0, -19.0, 3.0, 1.6);    // Corona Australis
 
-    float tau = (2.1 * layer + 1.9 * rift + 2.4 * complexes) * structure;
+    // And under all of it, the lane itself: thin, broken by filaments, but
+    // running the whole length of the band, fainter towards the anticentre.
+    // Without it the outer band reads as an even smear with no midplane.
+    float laneCore = exp(-pow((b - laneMid) / (0.5 * hDust), 2.0));
+    float laneBase = laneCore * (0.35 + 0.65 * fringe) * (0.4 + 1.1 * pow(fil, 1.8)) * mix(0.7, 1.0, inner);
+
+    float tau = (2.1 * layer + 1.9 * rift + 2.4 * complexes) * structure + 1.05 * laneBase;
     // Nothing reaches the edge of the map.
     float fade = 1.0 - smoothstep(0.75, 0.98, abs(b) / degrees(uLatMax));
     tau *= fade;
@@ -414,7 +444,7 @@ const STAR_VERT = /* glsl */ `
   uniform sampler2D uStructure;
   uniform float uLatMax;
   uniform float uSpan;
-  uniform vec3 uRose;
+  uniform vec3 uDust;
   ${STRUCTURE_RANGE}
   attribute float aLevel;
   attribute float aTau;
@@ -440,12 +470,16 @@ const STAR_VERT = /* glsl */ `
     }
     float n = clamp(level, 0.0, 1.0);
 
-    gl_PointSize = (0.58 + 2.30 * pow(n, 2.1)) * uPixelRatio;
-    vAlpha = (0.005 + 0.76 * pow(n, 2.6)) * uOpacity;
+    // Steep: most of the field sits below where a point can be picked out and
+    // only adds to the grain of the glow, and a sparse few stand out. A
+    // gentler curve put tens of thousands of stars at the same middling
+    // brightness, which reads as sandpaper rather than as a star field.
+    gl_PointSize = (0.55 + 2.30 * pow(n, 2.4)) * uPixelRatio;
+    vAlpha = (0.004 + 0.80 * pow(n, 3.1)) * uOpacity;
     // Reddening has to bite hard in the lane and not at all out of the plane.
     // Optical depth alone is too generous away from b = 0, so it is raised to
     // a power: negligible below about one, decisive above two.
-    vTint = mix(color, uRose, min(0.85, pow(tau / 3.2, 1.8)));
+    vTint = mix(color, uDust, min(0.55, pow(tau / 3.2, 1.8)));
   }
 `;
 
@@ -577,8 +611,12 @@ const HAZE_FRAG_STRUCTURED = /* glsl */ `
     // The palette's ochre and rose stay underneath, but in the photograph the
     // band is starlight first: where it is bright it is a warm cream, and the
     // colour lives in the fainter light and at the edges of the dust.
+    // The faint light is a muted ochre rather than the rose itself: in the
+    // photograph nothing in the band is pink except the few nebulae.
     vec3 cream = vec3(0.95, 0.92, 0.85);
-    vec3 col = mix(uBand, mix(uCore, cream, 0.45), clamp(0.25 * pow(toCentre, 1.4) + bulgeness, 0.0, 1.0));
+    vec3 faint = mix(uBand, uCore, 0.55);
+    faint = mix(faint, vec3(dot(faint, vec3(0.299, 0.587, 0.114))), 0.4);
+    vec3 col = mix(faint, mix(uCore, cream, 0.45), clamp(0.25 * pow(toCentre, 1.4) + bulgeness, 0.0, 1.0));
     col = mix(col, cream, clamp(light * 0.55, 0.0, 0.72));
     // Thin dust: some light through, and redder for it. Peaks near tau = 0.7.
     float redden = clamp(4.0 * absorb * (1.0 - absorb), 0.0, 1.0);
@@ -628,7 +666,7 @@ export function makeMilkyWay(renderer, starCount, rng, { detail = 1 } = {}) {
       uStructure: { value: structure.texture },
       uLatMax: { value: MW_NOISE.mapLatitude * DEG },
       uSpan: { value: stars.span },
-      uRose: { value: new THREE.Color(COLOR.mwBand) },
+      uDust: { value: new THREE.Color(COLOR.mwDust) },
     },
     vertexColors: true,
     transparent: true,
