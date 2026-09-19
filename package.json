@@ -7,8 +7,10 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "catalogue": "node scripts/build-catalogue.mjs",
     "mask": "node scripts/build-zoa-mask.mjs",
-    "density": "node scripts/build-density.mjs"
+    "density": "node scripts/build-density.mjs",
+    "pack-half": "node scripts/pack-half.mjs"
   },
   "dependencies": {
     "three": "^0.179.1"
