@@ -156,7 +156,7 @@ export function createJourney(canvas, camera) {
     if (pointers.size === 1) {
       // One finger, or the mouse: look around, or orbit once we are outside.
       drag.lon -= (e.clientX - prev.x) * DRAG_RATE;
-      drag.lat += (e.clientY - prev.y) * DRAG_RATE;
+      drag.lat -= (e.clientY - prev.y) * DRAG_RATE;
       return;
     }
 
